@@ -29,6 +29,8 @@ import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.Parameter;
 import org.apache.maven.shared.utils.logging.MessageUtils;
 import org.codehaus.plexus.component.configurator.ConfigurationListener;
+import org.codehaus.plexus.component.configurator.expression.ExpressionEvaluationException;
+import org.codehaus.plexus.component.configurator.expression.ExpressionEvaluator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,16 +49,19 @@ class ValidatingConfigurationListener
     private final ConfigurationListener delegate;
 
     private final MojoDescriptor mojoDescriptor;
+    private final ExpressionEvaluator expressionEvaluator;
 
     private final Logger logger = LoggerFactory.getLogger( getClass() );
 
     private final Map<String, Parameter> missingParameters;
 
-    ValidatingConfigurationListener( Object mojo, MojoDescriptor mojoDescriptor, ConfigurationListener delegate )
+    ValidatingConfigurationListener( Object mojo, MojoDescriptor mojoDescriptor, ConfigurationListener delegate,
+                                     ExpressionEvaluator expressionEvaluator )
     {
         this.mojo = mojo;
         this.delegate = delegate;
         this.mojoDescriptor = mojoDescriptor;
+        this.expressionEvaluator = expressionEvaluator;
         this.missingParameters = new HashMap<>();
 
         if ( mojoDescriptor.getParameters() != null )
@@ -80,7 +85,7 @@ class ValidatingConfigurationListener
     {
         delegate.notifyFieldChangeUsingSetter( fieldName, value, target );
 
-        if ( mojo == target )
+        if ( mojo == target && value != null )
         {
             notify( fieldName, value );
         }
@@ -90,7 +95,7 @@ class ValidatingConfigurationListener
     {
         delegate.notifyFieldChangeUsingReflection( fieldName, value, target );
 
-        if ( mojo == target )
+        if ( mojo == target && value != null )
         {
             notify( fieldName, value );
         }
@@ -98,10 +103,7 @@ class ValidatingConfigurationListener
 
     private void notify( String fieldName, Object value )
     {
-        if ( value != null )
-        {
-            missingParameters.remove( fieldName );
-        }
+        missingParameters.remove( fieldName );
 
         if ( logger.isWarnEnabled() )
         {
@@ -115,7 +117,8 @@ class ValidatingConfigurationListener
         String deprecated = parameter.getDeprecated();
         if ( deprecated != null && !deprecated.isEmpty() )
         {
-            if ( !toString( value ).equals( toString( parameter.getDefaultValue() ) ) )
+            Object defaultValue = evaluateValue( parameter.getDefaultValue() );
+            if ( !toString( value ).equals( toString( defaultValue ) ) )
             {
                 StringBuilder sb = new StringBuilder( "  Parameter '" );
                 sb.append( fieldName ).append( '\'' );
@@ -129,6 +132,19 @@ class ValidatingConfigurationListener
                 logger.warn( MessageUtils.buffer().warning( sb.toString() ).toString() );
             }
         }
+    }
+
+    private Object evaluateValue( String value )
+    {
+        try
+        {
+            return expressionEvaluator.evaluate( value );
+        }
+        catch ( ExpressionEvaluationException e )
+        {
+            // should not happen here
+        }
+        return value;
     }
 
     /**
